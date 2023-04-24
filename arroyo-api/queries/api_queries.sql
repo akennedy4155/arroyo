@@ -42,9 +42,15 @@ VALUES (:organization_id, :created_by, :name, :kafka_schema_registry, :type, :co
 --! create_source(connection_id?)
 INSERT INTO sources
 (organization_id, created_by, name, type, config, schema_id, connection_id)
-VALUES (:organization_id, :created_by, :name, :type, :config, :schema_id, :connection_id);
+VALUES (:organization_id, :created_by, :name, :type, :config, :schema_id, :connection_id)
+RETURNING id;
 
---! get_sources: (schema_config?, connection_name?, connection_type?, connection_config?, source_config?)
+--! get_source_pipeline
+SELECT raw_pipeline_job_id
+FROM sources
+WHERE id = :id;
+
+--! get_sources: (schema_config?, connection_name?, connection_type?, connection_config?, source_config?, raw_pipeline_job_id?)
 SELECT
     schemas.id as schema_id,
     schemas.type as schema_type,
@@ -54,6 +60,7 @@ SELECT
     sd.name as source_name,
     sd.type as source_type,
     sd.config as source_config,
+    sd.raw_pipeline_job_id as raw_pipeline_job_id,
     connections.name as connection_name,
     connections.type as connection_type,
     connections.config as connection_config,
@@ -69,6 +76,11 @@ WHERE sd.organization_id = :organization_id;
 --! delete_source
 DELETE FROM sources
 WHERE organization_id = :organization_id AND name = :name;
+
+--! add_raw_pipeline_to_source
+UPDATE sources
+SET raw_pipeline_job_id = :job_id
+WHERE sources.id = :source_id;
 
 ----------- sinks ----------------------
 

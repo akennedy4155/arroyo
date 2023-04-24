@@ -20,6 +20,7 @@ import { Connections } from "./routes/connections/Connections";
 import { ConnectionEditor } from "./routes/connections/CreateConnection";
 import { CreatePipeline } from "./routes/pipelines/CreatePipeline";
 import { SinkEditor } from "./routes/sinks/CreateSink";
+import { SourceDetail } from "./routes/sources/SourceDetail";
 
 import { addCloudRoutes, createRoot, getClient, needsOrgSetup } from "./lib/CloudComponents";
 
@@ -53,6 +54,10 @@ export function Router(): JSX.Element {
     {
       path: "sources/new",
       element: <CreateSource client={client} />,
+    },
+    {
+      path: "sources/:sourceId",
+      element: <SourceDetail client={client} />,
     },
     {
       path: "sinks",

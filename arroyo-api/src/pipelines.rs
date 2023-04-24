@@ -3,8 +3,9 @@ use arroyo_datastream::{Operator, Program};
 use arroyo_rpc::grpc::api::create_sql_job::Sink;
 use arroyo_rpc::grpc::api::sink::SinkType;
 use arroyo_rpc::grpc::api::{
-    self, connection, create_pipeline_req, BuiltinSink, CreatePipelineReq, CreateSqlJob,
-    PipelineDef, PipelineGraphReq, PipelineGraphResp, PipelineProgram, SqlError, SqlErrors,
+    self, connection, create_pipeline_req, BuiltinSink, CreateJobReq, CreateJobResp,
+    CreatePipelineReq, CreateSqlJob, PipelineDef, PipelineGraphReq, PipelineGraphResp,
+    PipelineProgram, SqlError, SqlErrors,
 };
 use arroyo_sql::{ArroyoSchemaProvider, SqlConfig};
 
@@ -15,18 +16,20 @@ use prost::Message;
 use tracing::log::info;
 
 use std::str::FromStr;
-use tonic::Status;
+use tonic::{Response, Status};
 use tracing::warn;
 
 use crate::queries::api_queries;
 use crate::queries::api_queries::DbPipeline;
 use crate::sources::auth_config_to_hashmap;
 use crate::types::public::PipelineType;
+use crate::DEFAULT_CHECKPOINT_INTERVAL;
 use crate::{
     connections, handle_db_error, log_and_map, optimizations, required_field, sinks,
     sources::{self, Source},
     AuthData,
 };
+use crate::{jobs, pipelines};
 
 async fn compile_sql<'e, E>(
     sql: &CreateSqlJob,
@@ -282,6 +285,24 @@ pub(crate) async fn create_pipeline<'a>(
     }
 
     Ok(pipeline_id)
+}
+
+pub(crate) async fn start_or_preview<'a>(
+    req: CreatePipelineReq,
+    preview: bool,
+    auth: AuthData,
+    tx: &Transaction<'a>,
+) -> Result<CreateJobResp, Status> {
+    let pipeline_id = pipelines::create_pipeline(req, auth.clone(), tx).await?;
+
+    let create_job = CreateJobReq {
+        pipeline_id: format!("{}", pipeline_id),
+        checkpoint_interval_micros: DEFAULT_CHECKPOINT_INTERVAL.as_micros() as u64,
+        preview,
+    };
+    let job_id = jobs::create_job(create_job, auth, tx).await?;
+
+    Ok(CreateJobResp { job_id })
 }
 
 impl TryInto<PipelineDef> for DbPipeline {

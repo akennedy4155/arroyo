@@ -14,8 +14,9 @@ use arroyo_rpc::grpc::{
         GetConnectionsReq, GetConnectionsResp, GetJobsReq, GetJobsResp, GetPipelineReq,
         GetSourcesReq, GetSourcesResp, GrpcOutputSubscription, JobCheckpointsReq,
         JobCheckpointsResp, JobDetailsReq, JobDetailsResp, JobMetricsReq, JobMetricsResp,
-        OutputData, PipelineDef, PipelineGraphReq, PipelineGraphResp, StopType, TestSchemaResp,
-        TestSourceMessage, UpdateJobReq, UpdateJobResp,
+        OutputData, PipelineDef, PipelineGraphReq, PipelineGraphResp, RefreshSampleReq,
+        RefreshSampleResp, StopType, TestSchemaResp, TestSourceMessage, UpdateJobReq,
+        UpdateJobResp,
     },
     controller_grpc_client::ControllerGrpcClient,
 };
@@ -309,33 +310,6 @@ impl ApiServer {
     async fn client(&self) -> Result<Object, Status> {
         self.pool.get().await.map_err(log_and_map)
     }
-
-    async fn start_or_preview(
-        &self,
-        req: CreatePipelineReq,
-        preview: bool,
-        auth: AuthData,
-    ) -> Result<Response<CreateJobResp>, Status> {
-        let mut client = self.client().await?;
-        let transaction = client.transaction().await.map_err(log_and_map)?;
-        transaction
-            .execute("SET TRANSACTION ISOLATION LEVEL SERIALIZABLE", &[])
-            .await
-            .map_err(log_and_map)?;
-
-        let pipeline_id = pipelines::create_pipeline(req, auth.clone(), &transaction).await?;
-        let create_job = CreateJobReq {
-            pipeline_id: format!("{}", pipeline_id),
-            checkpoint_interval_micros: DEFAULT_CHECKPOINT_INTERVAL.as_micros() as u64,
-            preview,
-        };
-
-        let job_id = jobs::create_job(create_job, auth, &transaction).await?;
-
-        transaction.commit().await.map_err(log_and_map)?;
-
-        Ok(Response::new(CreateJobResp { job_id }))
-    }
 }
 
 fn log_and_map<E>(err: E) -> Status
@@ -603,8 +577,16 @@ impl ApiGrpc for ApiServer {
         request: Request<CreatePipelineReq>,
     ) -> Result<Response<CreateJobResp>, Status> {
         let (request, auth) = self.authenticate(request).await?;
-        self.start_or_preview(request.into_inner(), false, auth)
+        let mut client = self.client().await?;
+        let transaction = client.transaction().await.map_err(log_and_map)?;
+        transaction
+            .execute("SET TRANSACTION ISOLATION LEVEL SERIALIZABLE", &[])
             .await
+            .map_err(log_and_map)?;
+        let resp =
+            pipelines::start_or_preview(request.into_inner(), false, auth, &transaction).await?;
+        transaction.commit().await.map_err(log_and_map)?;
+        Ok(Response::new(resp))
     }
 
     async fn preview_pipeline(
@@ -612,8 +594,16 @@ impl ApiGrpc for ApiServer {
         request: Request<CreatePipelineReq>,
     ) -> Result<Response<CreateJobResp>, Status> {
         let (request, auth) = self.authenticate(request).await?;
-        self.start_or_preview(request.into_inner(), true, auth)
+        let mut client = self.client().await?;
+        let transaction = client.transaction().await.map_err(log_and_map)?;
+        transaction
+            .execute("SET TRANSACTION ISOLATION LEVEL SERIALIZABLE", &[])
             .await
+            .map_err(log_and_map)?;
+        let resp =
+            pipelines::start_or_preview(request.into_inner(), true, auth, &transaction).await?;
+        transaction.commit().await.map_err(log_and_map)?;
+        Ok(Response::new(resp))
     }
 
     async fn get_jobs(
@@ -816,5 +806,56 @@ impl ApiGrpc for ApiServer {
         });
 
         Ok(Response::new(ReceiverStream::new(rx)))
+    }
+
+    async fn refresh_sample(
+        &self,
+        request: Request<RefreshSampleReq>,
+    ) -> Result<Response<RefreshSampleResp>, Status> {
+        let (request, auth) = self.authenticate(request).await?;
+        // get job_id from source pipeline
+        let job_id = api_queries::get_source_pipeline()
+            .bind(
+                &self.client().await?,
+                &(request.into_inner().source_id as i64),
+            )
+            .one()
+            .await
+            .map_err(log_and_map)?;
+
+        // start the job by updating and setting stop to none
+        self.update_job(Request::new(UpdateJobReq {
+            job_id: job_id.clone(),
+            stop: Some(StopType::None.into()),
+            checkpoint_interval_micros: None,
+            parallelism: None,
+        }))
+        .await?;
+
+        // output_lines is a job output stream take records 20
+        let output_lines: Vec<Result<OutputData, Status>> = jobs::JobOutputStream::new(
+            job_id.clone(),
+            auth,
+            String::from(&self.controller_addr),
+            &self.client().await?,
+        )
+        .await?
+        .take_records(20)
+        .await;
+
+        self.update_job(Request::new(UpdateJobReq {
+            job_id: job_id.clone(),
+            stop: Some(StopType::Immediate.into()),
+            checkpoint_interval_micros: None,
+            parallelism: None,
+        }))
+        .await?;
+
+        Ok(Response::new(RefreshSampleResp {
+            rando: output_lines
+                .iter()
+                .map(|record| record.clone().unwrap())
+                .collect(),
+        }))
     }
 }

@@ -13,20 +13,24 @@ use arroyo_datastream::{
 use arroyo_rpc::grpc::api::{
     self,
     connection::ConnectionType,
+    create_pipeline_req,
     create_source_req::{self},
+    create_sql_job::Sink,
     source_def::SourceType,
     source_schema::{self, Schema},
-    ConfluentSchemaReq, ConfluentSchemaResp, Connection, CreateSourceReq, DeleteSourceReq,
-    JsonSchemaDef, KafkaAuthConfig, KafkaSourceConfig, KafkaSourceDef, SourceDef, SourceField,
-    SourceMetadataResp, TestSourceMessage,
+    BuiltinSink, ConfluentSchemaReq, ConfluentSchemaResp, Connection, CreatePipelineReq,
+    CreateSourceReq, CreateSqlJob, DeleteSourceReq, JsonSchemaDef, KafkaAuthConfig,
+    KafkaSourceConfig, KafkaSourceDef, SourceDef, SourceField, SourceMetadataResp,
+    TestSourceMessage,
 };
 use arroyo_sql::{
     types::{StructDef, StructField, TypeDef},
     ArroyoSchemaProvider,
 };
 use cornucopia_async::GenericClient;
-use deadpool_postgres::Pool;
+use deadpool_postgres::{Pool, Transaction};
 use http::StatusCode;
+use time::OffsetDateTime;
 use tokio::sync::mpsc::{channel, Receiver, Sender};
 use tonic::Status;
 use tracing::warn;
@@ -42,7 +46,7 @@ use crate::{
     testers::KafkaTester,
     AuthData,
 };
-use crate::{handle_delete, types::public};
+use crate::{handle_delete, pipelines, types::public};
 
 pub fn impulse_schema() -> SourceSchema {
     SourceSchema {
@@ -602,6 +606,7 @@ pub(crate) async fn create_source(
     // insert schema
     let schema = req
         .schema
+        .clone()
         .or_else(|| {
             match req.type_oneof {
                 Some(create_source_req::TypeOneof::Impulse { .. }) => {
@@ -656,60 +661,63 @@ pub(crate) async fn create_source(
         .map_err(|err| handle_db_error("schema", err))?;
 
     // insert source
-    let (source_type, config, connection_id) =
-        match req.type_oneof.ok_or_else(|| required_field("type"))? {
-            create_source_req::TypeOneof::Kafka(kafka) => {
-                let connection = connections
-                    .iter()
-                    .find(|c| c.name == kafka.connection)
-                    .ok_or_else(|| {
-                        Status::failed_precondition(format!(
-                            "Could not find connection with name '{}'",
-                            kafka.connection
-                        ))
-                    })?;
-
-                if connection.r#type != public::ConnectionType::kafka {
-                    return Err(Status::invalid_argument(format!(
-                        "Connection '{}' is not a kafka cluster",
+    let (source_type, config, connection_id) = match req
+        .type_oneof
+        .as_ref()
+        .ok_or_else(|| required_field("type"))?
+    {
+        create_source_req::TypeOneof::Kafka(kafka) => {
+            let connection = connections
+                .iter()
+                .find(|c| c.name == kafka.connection)
+                .ok_or_else(|| {
+                    Status::failed_precondition(format!(
+                        "Could not find connection with name '{}'",
                         kafka.connection
-                    )));
-                }
+                    ))
+                })?;
 
-                (
-                    public::SourceType::kafka,
-                    serde_json::to_value(&kafka).unwrap(),
-                    Some(connection.id),
-                )
+            if connection.r#type != public::ConnectionType::kafka {
+                return Err(Status::invalid_argument(format!(
+                    "Connection '{}' is not a kafka cluster",
+                    kafka.connection
+                )));
             }
-            create_source_req::TypeOneof::Impulse(impulse) => {
-                if impulse.events_per_second > auth.org_metadata.max_impulse_qps as f32 {
-                    return rate_limit_error("impulse", auth.org_metadata.max_impulse_qps as usize);
-                }
 
-                (
-                    public::SourceType::impulse,
-                    serde_json::to_value(impulse).unwrap(),
-                    None,
-                )
+            (
+                public::SourceType::kafka,
+                serde_json::to_value(&kafka).unwrap(),
+                Some(connection.id),
+            )
+        }
+        create_source_req::TypeOneof::Impulse(impulse) => {
+            if impulse.events_per_second > auth.org_metadata.max_impulse_qps as f32 {
+                return rate_limit_error("impulse", auth.org_metadata.max_impulse_qps as usize);
             }
-            create_source_req::TypeOneof::File(_) => {
-                return Err(Status::failed_precondition("This source is not supported"));
-            }
-            create_source_req::TypeOneof::Nexmark(nexmark) => {
-                if nexmark.events_per_second > auth.org_metadata.max_nexmark_qps as u32 {
-                    return rate_limit_error("impulse", auth.org_metadata.max_impulse_qps as usize);
-                }
 
-                (
-                    public::SourceType::nexmark,
-                    serde_json::to_value(nexmark).unwrap(),
-                    None,
-                )
+            (
+                public::SourceType::impulse,
+                serde_json::to_value(impulse).unwrap(),
+                None,
+            )
+        }
+        create_source_req::TypeOneof::File(_) => {
+            return Err(Status::failed_precondition("This source is not supported"));
+        }
+        create_source_req::TypeOneof::Nexmark(nexmark) => {
+            if nexmark.events_per_second > auth.org_metadata.max_nexmark_qps as u32 {
+                return rate_limit_error("impulse", auth.org_metadata.max_impulse_qps as usize);
             }
-        };
 
-    api_queries::create_source()
+            (
+                public::SourceType::nexmark,
+                serde_json::to_value(nexmark).unwrap(),
+                None,
+            )
+        }
+    };
+
+    let source_id = api_queries::create_source()
         .bind(
             &transaction,
             &auth.organization_id,
@@ -720,10 +728,59 @@ pub(crate) async fn create_source(
             &schema_id,
             &connection_id,
         )
+        .one()
         .await
         .map_err(|err| handle_db_error("source", err))?;
 
+    create_raw_pipeline(req, source_id, auth, &transaction).await?;
+
     transaction.commit().await.map_err(log_and_map)?;
+    Ok(())
+}
+
+async fn create_raw_pipeline<'a>(
+    request: CreateSourceReq,
+    source_id: i64,
+    auth: AuthData,
+    tx: &Transaction<'a>,
+) -> Result<(), Status> {
+    let source_name = request.name;
+    // create the raw preview pipeline with a request to the pipeline api
+    let job_resp = pipelines::start_or_preview(
+        CreatePipelineReq {
+            name: format!("passthrough_source_{}_{}", source_id, source_name),
+            config: Some(create_pipeline_req::Config::Sql(CreateSqlJob {
+                query: format!("SELECT * FROM {};", source_name),
+                parallelism: 1,
+                sink: Some(Sink::Builtin(BuiltinSink::Web as i32)),
+            })),
+        },
+        false,
+        auth,
+        tx,
+    )
+    .await?;
+
+    // add the id for the raw pipeline to the source table
+    api_queries::add_raw_pipeline_to_source()
+        .bind(tx, &job_resp.job_id, &source_id)
+        .await
+        .map_err(|err| handle_db_error("pipeline", err))?;
+
+    api_queries::update_job()
+        .bind(
+            tx,
+            &OffsetDateTime::now_utc(),
+            &"alex",
+            &Some(public::StopMode::immediate),
+            &None,
+            &<Option<serde_json::Value>>::None,
+            &job_resp.job_id,
+            &"org",
+        )
+        .await
+        .map_err(|err| handle_db_error("pipeline", err))?;
+
     Ok(())
 }
 
@@ -796,6 +853,7 @@ pub(crate) async fn get_sources<E: GenericClient>(
                     .map(|f| f.try_into().unwrap())
                     .collect(),
                 source_type: Some(source_type),
+                raw_pipeline_job_id: rec.raw_pipeline_job_id,
             }
         })
         .collect();

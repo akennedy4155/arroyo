@@ -1302,6 +1302,12 @@ export class Operator extends Message<Operator> {
      */
     value: SlidingAggregatingTopN;
     case: "slidingAggregatingTopN";
+  } | {
+    /**
+     * @generated from field: arroyo_api.JoinWithExpiration join_with_expiration = 21;
+     */
+    value: JoinWithExpiration;
+    case: "joinWithExpiration";
   } | { case: undefined; value?: undefined } = { case: undefined };
 
   constructor(data?: PartialMessage<Operator>) {
@@ -1331,6 +1337,7 @@ export class Operator extends Message<Operator> {
     { no: 18, name: "tumbling_window_aggregator", kind: "message", T: TumblingWindowAggregator, oneof: "operator" },
     { no: 19, name: "tumbling_top_n", kind: "message", T: TumblingTopN, oneof: "operator" },
     { no: 20, name: "sliding_aggregating_top_n", kind: "message", T: SlidingAggregatingTopN, oneof: "operator" },
+    { no: 21, name: "join_with_expiration", kind: "message", T: JoinWithExpiration, oneof: "operator" },
   ]);
 
   static fromBinary(bytes: Uint8Array, options?: Partial<BinaryReadOptions>): Operator {
@@ -2512,6 +2519,49 @@ export class SlidingAggregatingTopN extends Message<SlidingAggregatingTopN> {
 
   static equals(a: SlidingAggregatingTopN | PlainMessage<SlidingAggregatingTopN> | undefined, b: SlidingAggregatingTopN | PlainMessage<SlidingAggregatingTopN> | undefined): boolean {
     return proto3.util.equals(SlidingAggregatingTopN, a, b);
+  }
+}
+
+/**
+ * @generated from message arroyo_api.JoinWithExpiration
+ */
+export class JoinWithExpiration extends Message<JoinWithExpiration> {
+  /**
+   * @generated from field: uint64 left_expiration_micros = 1;
+   */
+  leftExpirationMicros = protoInt64.zero;
+
+  /**
+   * @generated from field: uint64 right_expiration_micros = 2;
+   */
+  rightExpirationMicros = protoInt64.zero;
+
+  constructor(data?: PartialMessage<JoinWithExpiration>) {
+    super();
+    proto3.util.initPartial(data, this);
+  }
+
+  static readonly runtime = proto3;
+  static readonly typeName = "arroyo_api.JoinWithExpiration";
+  static readonly fields: FieldList = proto3.util.newFieldList(() => [
+    { no: 1, name: "left_expiration_micros", kind: "scalar", T: 4 /* ScalarType.UINT64 */ },
+    { no: 2, name: "right_expiration_micros", kind: "scalar", T: 4 /* ScalarType.UINT64 */ },
+  ]);
+
+  static fromBinary(bytes: Uint8Array, options?: Partial<BinaryReadOptions>): JoinWithExpiration {
+    return new JoinWithExpiration().fromBinary(bytes, options);
+  }
+
+  static fromJson(jsonValue: JsonValue, options?: Partial<JsonReadOptions>): JoinWithExpiration {
+    return new JoinWithExpiration().fromJson(jsonValue, options);
+  }
+
+  static fromJsonString(jsonString: string, options?: Partial<JsonReadOptions>): JoinWithExpiration {
+    return new JoinWithExpiration().fromJsonString(jsonString, options);
+  }
+
+  static equals(a: JoinWithExpiration | PlainMessage<JoinWithExpiration> | undefined, b: JoinWithExpiration | PlainMessage<JoinWithExpiration> | undefined): boolean {
+    return proto3.util.equals(JoinWithExpiration, a, b);
   }
 }
 
@@ -4804,6 +4854,11 @@ export class SourceDef extends Message<SourceDef> {
   consumers = 0;
 
   /**
+   * @generated from field: string raw_pipeline_job_id = 11;
+   */
+  rawPipelineJobId = "";
+
+  /**
    * @generated from oneof arroyo_api.SourceDef.source_type
    */
   sourceType: {
@@ -4850,6 +4905,7 @@ export class SourceDef extends Message<SourceDef> {
     { no: 2, name: "schema", kind: "message", T: SourceSchema },
     { no: 8, name: "connection", kind: "scalar", T: 9 /* ScalarType.STRING */, opt: true },
     { no: 10, name: "consumers", kind: "scalar", T: 5 /* ScalarType.INT32 */ },
+    { no: 11, name: "raw_pipeline_job_id", kind: "scalar", T: 9 /* ScalarType.STRING */ },
     { no: 3, name: "kafka", kind: "message", T: KafkaSourceDef, oneof: "source_type" },
     { no: 4, name: "impulse", kind: "message", T: ImpulseSourceConfig, oneof: "source_type" },
     { no: 5, name: "file", kind: "message", T: FileSourceConfig, oneof: "source_type" },
@@ -5536,6 +5592,80 @@ export class DeleteSinkResp extends Message<DeleteSinkResp> {
 
   static equals(a: DeleteSinkResp | PlainMessage<DeleteSinkResp> | undefined, b: DeleteSinkResp | PlainMessage<DeleteSinkResp> | undefined): boolean {
     return proto3.util.equals(DeleteSinkResp, a, b);
+  }
+}
+
+/**
+ * @generated from message arroyo_api.RefreshSampleReq
+ */
+export class RefreshSampleReq extends Message<RefreshSampleReq> {
+  /**
+   * @generated from field: uint64 source_id = 1;
+   */
+  sourceId = protoInt64.zero;
+
+  constructor(data?: PartialMessage<RefreshSampleReq>) {
+    super();
+    proto3.util.initPartial(data, this);
+  }
+
+  static readonly runtime = proto3;
+  static readonly typeName = "arroyo_api.RefreshSampleReq";
+  static readonly fields: FieldList = proto3.util.newFieldList(() => [
+    { no: 1, name: "source_id", kind: "scalar", T: 4 /* ScalarType.UINT64 */ },
+  ]);
+
+  static fromBinary(bytes: Uint8Array, options?: Partial<BinaryReadOptions>): RefreshSampleReq {
+    return new RefreshSampleReq().fromBinary(bytes, options);
+  }
+
+  static fromJson(jsonValue: JsonValue, options?: Partial<JsonReadOptions>): RefreshSampleReq {
+    return new RefreshSampleReq().fromJson(jsonValue, options);
+  }
+
+  static fromJsonString(jsonString: string, options?: Partial<JsonReadOptions>): RefreshSampleReq {
+    return new RefreshSampleReq().fromJsonString(jsonString, options);
+  }
+
+  static equals(a: RefreshSampleReq | PlainMessage<RefreshSampleReq> | undefined, b: RefreshSampleReq | PlainMessage<RefreshSampleReq> | undefined): boolean {
+    return proto3.util.equals(RefreshSampleReq, a, b);
+  }
+}
+
+/**
+ * @generated from message arroyo_api.RefreshSampleResp
+ */
+export class RefreshSampleResp extends Message<RefreshSampleResp> {
+  /**
+   * @generated from field: repeated arroyo_api.OutputData rando = 1;
+   */
+  rando: OutputData[] = [];
+
+  constructor(data?: PartialMessage<RefreshSampleResp>) {
+    super();
+    proto3.util.initPartial(data, this);
+  }
+
+  static readonly runtime = proto3;
+  static readonly typeName = "arroyo_api.RefreshSampleResp";
+  static readonly fields: FieldList = proto3.util.newFieldList(() => [
+    { no: 1, name: "rando", kind: "message", T: OutputData, repeated: true },
+  ]);
+
+  static fromBinary(bytes: Uint8Array, options?: Partial<BinaryReadOptions>): RefreshSampleResp {
+    return new RefreshSampleResp().fromBinary(bytes, options);
+  }
+
+  static fromJson(jsonValue: JsonValue, options?: Partial<JsonReadOptions>): RefreshSampleResp {
+    return new RefreshSampleResp().fromJson(jsonValue, options);
+  }
+
+  static fromJsonString(jsonString: string, options?: Partial<JsonReadOptions>): RefreshSampleResp {
+    return new RefreshSampleResp().fromJsonString(jsonString, options);
+  }
+
+  static equals(a: RefreshSampleResp | PlainMessage<RefreshSampleResp> | undefined, b: RefreshSampleResp | PlainMessage<RefreshSampleResp> | undefined): boolean {
+    return proto3.util.equals(RefreshSampleResp, a, b);
   }
 }
 
